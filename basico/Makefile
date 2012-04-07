@@ -1,5 +1,6 @@
-CXX = g++
-CXXOPTS = -ggdb -Wall -Wextra -std=gnu++0x -Dnullptr=NULL
+CXX     := g++
+CXXOPTS := -ggdb -Wall -Wextra -std=gnu++0x -Dnullptr=NULL
+LDLIBS  := boost_program_options
 
 
 
@@ -15,6 +16,6 @@ all: basico
 
 
 basico: basico.o
-	$(CXX) $(CXXOPTS) -o $@ $^
+	$(CXX) $(CXXOPTS) -o $@ $^ $(LDLIBS:%=-l%)
 
 basico.o: basico.cc

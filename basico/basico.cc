@@ -4,8 +4,13 @@
 #include <random>
 #include <unordered_set>
 #include <vector>
+#include <sysexits.h>
 
+#include <boost/program_options.hpp>
+namespace po = boost::program_options;
 
+const int rows = 100;
+const int cols = 100;
 
 unsigned int agent_next_id = 0;
 
@@ -78,9 +83,40 @@ class Agent {
 
 
 int main(int argc, char * argv[]) {
-        (void)argc;
-        (void)argv;
+        double coop_fraction;
+        double coop_cost;
+        double coop_benefit;
+        unsigned int iters;
 
+        try {
+                po::options_description desc("basico");
+                desc.add_options()
+                        ("help", "produce help message")
+                        ("coop_fraction", po::value<double>(), "set initial cooperation fraction")
+                        ("coop_cost"    , po::value<double>(), "set cooperation cost"            )
+                        ("coop_benefit" , po::value<double>(), "set cooperation benefit"         )
+                        ("iters"        , po::value<int   >(), "set iteration count"             )
+                ;
+
+                po::variables_map vm;
+                po::store(po::parse_command_line(argc, argv, desc), vm);
+                po::notify(vm);
+
+                if (vm.count("help")) {
+                        std::cout << desc << std::endl;
+                        std::exit(EX_OK);
+                }
+
+                coop_cost     = vm.count("coop_cost"    ) ? vm["coop_cost"    ].as<double>() : 1   ;
+                coop_benefit  = vm.count("coop_benefit" ) ? vm["coop_benefit" ].as<double>() : 10  ;
+                coop_fraction = vm.count("coop_fraction") ? vm["coop_fraction"].as<double>() :  0.5;
+                iters         = vm.count("iters"        ) ? vm["iters"        ].as<double>() : 50  ;
+        } catch(std::exception & e) {
+                std::cerr << "error: " << e.what() << std::endl;
+                std::exit(EX_USAGE);
+        }
+
+        std::vector<std::vector<Agent *>> grid;
         std::vector<Agent *> world;
 
         // Crear el generador de randoms.
@@ -88,19 +124,24 @@ int main(int argc, char * argv[]) {
         std::mt19937 gen { rd() };
         std::uniform_real_distribution<> dis;
 
-        std::generate_n(
-                std::back_inserter(world),
-                100,
-                [&]() { return new Agent(dis(gen) > 0.2); }
-        );
+        for (int i = 0; i < rows; ++i) {
+                auto row = std::vector<Agent *>();
+                for (int j = 0; j < cols; ++j) {
+                        auto new_agent = new Agent(dis(gen) < coop_fraction);
+                        row.push_back(new_agent);
+                        world.push_back(new_agent);
+                }
+                grid.push_back(std::move(row));
+        }
 
-        Agent * anterior = nullptr;
-        std::for_each(
-                world.begin(),
-                world.end(),
-                [&anterior](Agent * a) { if (anterior) a->add_vecino(anterior); anterior = a; }
-        );
-        world[0]->add_vecino(anterior);
+        for (int i = 0; i < rows; ++i) {
+                for (int j = 0; j < cols; ++j) {
+                        grid[i][j]->add_vecino(grid[i                    ][(cols + j - 1) % cols]);
+                        grid[i][j]->add_vecino(grid[i                    ][(cols + j + 1) % cols]);
+                        grid[i][j]->add_vecino(grid[(rows + i - 1) % rows][j                    ]);
+                        grid[i][j]->add_vecino(grid[(rows + i + 1) % rows][j                    ]);
+                }
+        }
 
         /* Para cada agente en el mundo, vamos a decirle cómo calcular
          * su fitness y cómo actualizarse…
@@ -108,19 +149,19 @@ int main(int argc, char * argv[]) {
         std::for_each(
                 world.begin(),
                 world.end(),
-                [](Agent * a) {
+                [coop_cost, coop_benefit](Agent * a) {
                         /* …así que a a->fitness_func le vamos a
                          * asignar nuestra nueva función de fitness:
                          */
-                        a->fitness_func = [](Agent * af) {
+                        a->fitness_func = [coop_cost, coop_benefit](Agent * af) {
                                 af->fitness = 0;
 
                                 std::for_each(
                                         af->vecinos.begin(),
                                         af->vecinos.end(),
-                                        [&af](Agent * v) {
-                                                if (af->coop) af->fitness -=  1;
-                                                if (v ->coop) af->fitness += 10;
+                                        [coop_cost, coop_benefit, &af](Agent * v) {
+                                                if (af->coop) af->fitness -= coop_cost   ;
+                                                if (v ->coop) af->fitness += coop_benefit;
                                         }
                                 );
 
@@ -164,40 +205,46 @@ int main(int argc, char * argv[]) {
                 }
         );
 
-        auto show_state = [&world](unsigned int i, bool show_fitness) {
+        auto show_state = [&world, &grid](unsigned int i, bool show_fitness) {
                 unsigned int n_coops = 0;
 
                 double pfc  = 0;
                 double pfnc = 0;
 
                 std::cout
-                        << "Iteración " << i << ":\t"
+                        << "Iteración " << i << ":\n"
                         << std::accumulate(
-                                world.begin(),
-                                world.end(),
+                                grid.begin(),
+                                grid.end(),
                                 std::string(),
-                                [&n_coops, &pfc, &pfnc](std::string acc, Agent * a) {
-                                        (a->coop ? pfc : pfnc) += a->fitness;
-                                        n_coops += a->coop;
-                                        return acc + (a->coop ? "1" : "0");
+                                [&n_coops, &pfc, &pfnc](std::string acc, std::vector<Agent *> row) {
+                                        return
+                                                acc
+                                                + std::accumulate(
+                                                        row.begin(),
+                                                        row.end(),
+                                                        std::string(),
+                                                        [&n_coops, &pfc, &pfnc](std::string acc, Agent * a) {
+                                                                (a->coop ? pfc : pfnc) += a->fitness;
+                                                                n_coops += a->coop;
+                                                                return acc + (a->coop ? u8"█" : u8"░");
+                                                        }
+                                                )
+                                                + "\n";
                                 }
                         );
 
-                std::cout << " ("
-                        << n_coops
-                        << " cooperadores)";
+                std::cout << n_coops << " cooperadores" << "\n";
 
                 if (show_fitness) std::cout
-                        << " "
-                        << pfc / n_coops
-                        << "/"
-                        << pfnc / (world.size() - n_coops);
+                        << "Iteración " << i << "[fitness de cooperadores] = " << pfc /n_coops                  << "\n"
+                        << "Iteración " << i << "[fitness de traidores   ] = " << pfnc/(world.size() - n_coops) << "\n";
 
                 std::cout << std::endl;
         };
 
         show_state(0, false);
-        for (int i = 0; i < 30; ++i) {
+        for (int i = 0; i < iters; ++i) {
                 std::for_each(
                         world.begin(),
                         world.end(),
@@ -212,5 +259,4 @@ int main(int argc, char * argv[]) {
 
                 show_state(i + 1, true);
         }
-
 }
