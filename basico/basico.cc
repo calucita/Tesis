@@ -9,9 +9,6 @@
 #include <boost/program_options.hpp>
 namespace po = boost::program_options;
 
-const int rows = 100;
-const int cols = 100;
-
 unsigned int agent_next_id = 1;
 
 class Agent {
@@ -87,15 +84,23 @@ int main(int argc, char * argv[]) {
         double coop_cost;
         double coop_benefit;
         unsigned int iters;
+        unsigned int rows;
+        unsigned int cols;
+        double dif;
+        bool toggle;
 
         try {
                 po::options_description desc("basico");
                 desc.add_options()
-                        ("help", "produce help message")
+                        ("help"         ,                      "produce help message"            )
+                        ("toggle"       ,                      "operate in toggle mode"          )
                         ("coop_fraction", po::value<double>(), "set initial cooperation fraction")
                         ("coop_cost"    , po::value<double>(), "set cooperation cost"            )
                         ("coop_benefit" , po::value<double>(), "set cooperation benefit"         )
                         ("iters"        , po::value<int   >(), "set iteration count"             )
+                        ("rows"         , po::value<int   >(), "set grid row count"              )
+                        ("cols"         , po::value<int   >(), "set grid column count"           )
+                        ("dif"          , po::value<double>(), "set diffusion probability"       )
                 ;
 
                 po::variables_map vm;
@@ -107,10 +112,15 @@ int main(int argc, char * argv[]) {
                         std::exit(EX_OK);
                 }
 
+                toggle = vm.count("toggle");
+
                 coop_cost     = vm.count("coop_cost"    ) ? vm["coop_cost"    ].as<double>() : 1   ;
                 coop_benefit  = vm.count("coop_benefit" ) ? vm["coop_benefit" ].as<double>() : 10  ;
                 coop_fraction = vm.count("coop_fraction") ? vm["coop_fraction"].as<double>() :  0.5;
                 iters         = vm.count("iters"        ) ? vm["iters"        ].as<int   >() : 50  ;
+                rows          = vm.count("rows"         ) ? vm["rows"         ].as<int   >() :100  ;
+                cols          = vm.count("cols"         ) ? vm["cols"         ].as<int   >() :100  ;
+                dif           = vm.count("dif"          ) ? vm["dif"          ].as<double>() :  0  ;
         } catch(std::exception & e) {
                 std::cerr << "error: " << e.what() << std::endl;
                 std::exit(EX_USAGE);
@@ -124,9 +134,9 @@ int main(int argc, char * argv[]) {
         std::mt19937 gen { rd() };
         std::uniform_real_distribution<> dis;
 
-        for (int i = 0; i < rows; ++i) {
+        for (unsigned int i = 0; i < rows; ++i) {
                 auto row = std::vector<Agent *>();
-                for (int j = 0; j < cols; ++j) {
+                for (unsigned int j = 0; j < cols; ++j) {
                         auto new_agent = new Agent(dis(gen) < coop_fraction);
                         row.push_back(new_agent);
                         world.push_back(new_agent);
@@ -134,8 +144,8 @@ int main(int argc, char * argv[]) {
                 grid.push_back(std::move(row));
         }
 
-        for (int i = 0; i < rows; ++i) {
-                for (int j = 0; j < cols; ++j) {
+        for (unsigned int i = 0; i < rows; ++i) {
+                for (unsigned int j = 0; j < cols; ++j) {
                         grid[i][j]->add_vecino(grid[i                    ][(cols + j - 1) % cols]);
                         grid[i][j]->add_vecino(grid[i                    ][(cols + j + 1) % cols]);
                         grid[i][j]->add_vecino(grid[(rows + i - 1) % rows][j                    ]);
@@ -149,21 +159,52 @@ int main(int argc, char * argv[]) {
         std::for_each(
                 world.begin(),
                 world.end(),
-                [coop_cost, coop_benefit](Agent * a) {
+                [toggle, dif, &dis, &gen, coop_cost, coop_benefit](Agent * a) {
                         /* …así que a a->fitness_func le vamos a
                          * asignar nuestra nueva función de fitness:
                          */
-                        a->fitness_func = [coop_cost, coop_benefit](Agent * af) {
+                        a->fitness_func = [dif, &dis, &gen, coop_cost, coop_benefit](Agent * af) {
                                 af->fitness = 0;
+
+                                std::unordered_set<Agent *> gente2;
+                                if (dif) {
+                                        std::for_each(
+                                                af->vecinos.begin(),
+                                                af->vecinos.end(),
+                                                [af, &gente2](Agent * v) {
+                                                        std::for_each(
+                                                                v->vecinos.begin(),
+                                                                v->vecinos.end(),
+                                                                [af, &gente2](Agent * v2) {
+                                                                        if (v2 != af && af->vecinos.find(v2) == af->vecinos.end()) gente2.insert(v2);
+                                                                }
+                                                        );
+                                                }
+                                        );
+                                }
+
+                                auto incr_fitness = [coop_cost, coop_benefit, af](Agent * v) {
+                                        if (af->coop) af->fitness -= coop_cost   ;
+                                        if (v ->coop) af->fitness += coop_benefit;
+                                };
 
                                 std::for_each(
                                         af->vecinos.begin(),
                                         af->vecinos.end(),
-                                        [coop_cost, coop_benefit, &af](Agent * v) {
-                                                if (af->coop) af->fitness -= coop_cost   ;
-                                                if (v ->coop) af->fitness += coop_benefit;
+                                        [&incr_fitness](Agent * v) {
+                                                incr_fitness(v);
                                         }
                                 );
+
+                                if (dif) {
+                                        std::for_each(
+                                                gente2.begin(),
+                                                gente2.end(),
+                                                [dif, &incr_fitness, &dis, &gen](Agent * v) {
+                                                        if (dis(gen) < dif) incr_fitness(v);
+                                                }
+                                        );
+                                }
 
                                 return af->fitness;
                         };
@@ -171,36 +212,36 @@ int main(int argc, char * argv[]) {
                         /* …y a a->update le vamos a asignar nuestra
                          * nueva función de fritanga:
                          */
-                        a->update = [a]() {
-#if TOGGLE_IF_ENVIDIA
-                                for (
-                                        auto it = a->vecinos.begin();
-                                        it != a->vecinos.end();
-                                        ++it
-                                ) {
-                                        if ((*it)->fitness > a->fitness) {
-                                                a->coop ^= 1;
-                                                return;
-                                        }
-                                }
-#endif
-
-                                auto max_fitness      = a->fitness;
-                                auto max_fitness_coop = a->coop   ;
-                                // ME ME ME ME MEEEEEEEEEEEEEEEEEEEE
-
-                                std::for_each(
-                                        a->vecinos.begin(),
-                                        a->vecinos.end(),
-                                        [&max_fitness, &max_fitness_coop](Agent * v) {
-                                                if (v->fitness > max_fitness) {
-                                                        max_fitness      = v->fitness;
-                                                        max_fitness_coop = v->coop   ;
+                        a->update = [a, toggle]() {
+                                if (toggle) {
+                                        for (
+                                                auto it = a->vecinos.begin();
+                                                it != a->vecinos.end();
+                                                ++it
+                                        ) {
+                                                if ((*it)->fitness > a->fitness) {
+                                                        a->coop ^= 1;
+                                                        return;
                                                 }
                                         }
-                                );
+                                } else {
+                                        auto max_fitness      = a->fitness;
+                                        auto max_fitness_coop = a->coop   ;
+                                        // ME ME ME ME MEEEEEEEEEEEEEEEEEEEE
 
-                                a->coop = max_fitness_coop;
+                                        std::for_each(
+                                                a->vecinos.begin(),
+                                                a->vecinos.end(),
+                                                [&max_fitness, &max_fitness_coop](Agent * v) {
+                                                        if (v->fitness > max_fitness) {
+                                                                max_fitness      = v->fitness;
+                                                                max_fitness_coop = v->coop   ;
+                                                        }
+                                                }
+                                        );
+
+                                        a->coop = max_fitness_coop;
+                                }
                         };
                 }
         );
