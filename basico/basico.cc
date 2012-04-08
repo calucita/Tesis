@@ -92,8 +92,8 @@ int main(int argc, char * argv[]) {
         try {
                 po::options_description desc("basico");
                 desc.add_options()
-                        ("help"         ,                      "produce help message"            )
-                        ("toggle"       ,                      "operate in toggle mode"          )
+                        ("help"                              , "produce help message"            )
+                        ("toggle"                            , "operate in toggle mode"          )
                         ("coop_fraction", po::value<double>(), "set initial cooperation fraction")
                         ("coop_cost"    , po::value<double>(), "set cooperation cost"            )
                         ("coop_benefit" , po::value<double>(), "set cooperation benefit"         )

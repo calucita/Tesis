@@ -1,12 +1,15 @@
 CXX     := g++
-CXXOPTS := -ggdb -Wall -Wextra -std=gnu++0x
+CXXOPTS := -ggdb -Wall -Wextra -std=gnu++0x -Dnullptr=NULL
 LDLIBS  := boost_program_options
 
 
 
-.PHONY: all
+.PHONY: all clean
 
 all: basico
+
+clean:
+	rm -f ./*.o basico
 
 
 
