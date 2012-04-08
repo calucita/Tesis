@@ -110,7 +110,7 @@ int main(int argc, char * argv[]) {
                 coop_cost     = vm.count("coop_cost"    ) ? vm["coop_cost"    ].as<double>() : 1   ;
                 coop_benefit  = vm.count("coop_benefit" ) ? vm["coop_benefit" ].as<double>() : 10  ;
                 coop_fraction = vm.count("coop_fraction") ? vm["coop_fraction"].as<double>() :  0.5;
-                iters         = vm.count("iters"        ) ? vm["iters"        ].as<double>() : 50  ;
+                iters         = vm.count("iters"        ) ? vm["iters"        ].as<int   >() : 50  ;
         } catch(std::exception & e) {
                 std::cerr << "error: " << e.what() << std::endl;
                 std::exit(EX_USAGE);
