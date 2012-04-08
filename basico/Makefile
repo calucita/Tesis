@@ -1,5 +1,5 @@
 CXX     := g++
-CXXOPTS := -ggdb -Wall -Wextra -std=gnu++0x -Dnullptr=NULL
+CXXOPTS := -ggdb -Wall -Wextra -std=gnu++0x
 LDLIBS  := boost_program_options
 
 

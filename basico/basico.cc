@@ -12,7 +12,7 @@ namespace po = boost::program_options;
 const int rows = 100;
 const int cols = 100;
 
-unsigned int agent_next_id = 0;
+unsigned int agent_next_id = 1;
 
 class Agent {
         public:
@@ -171,7 +171,7 @@ int main(int argc, char * argv[]) {
                         /* …y a a->update le vamos a asignar nuestra
                          * nueva función de fritanga:
                          */
-                        a->update = [&a]() {
+                        a->update = [a]() {
 #if TOGGLE_IF_ENVIDIA
                                 for (
                                         auto it = a->vecinos.begin();
@@ -244,7 +244,7 @@ int main(int argc, char * argv[]) {
         };
 
         show_state(0, false);
-        for (int i = 0; i < iters; ++i) {
+        for (unsigned int i = 0; i < iters; ++i) {
                 std::for_each(
                         world.begin(),
                         world.end(),
