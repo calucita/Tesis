@@ -9,6 +9,14 @@
 #include <boost/program_options.hpp>
 namespace po = boost::program_options;
 
+#ifdef UNICODE_AGENT_STRINGS
+#       define   COOP_AGENT_STRING u8"█"
+#       define NOCOOP_AGENT_STRING u8"░"
+#else
+#       define   COOP_AGENT_STRING "@"
+#       define NOCOOP_AGENT_STRING " "
+#endif
+
 unsigned int agent_next_id = 1;
 
 class Agent {
@@ -16,11 +24,12 @@ class Agent {
                 bool coop;
                 std::unordered_set<Agent *> vecinos;
 
-                std::function<double(Agent *)> fitness_func;
-                std::function<void  (void   )> update;
+                std::function<void(void)> eval_fitness;
+                std::function<void(void)> eval_coop   ;
                 const int id;
 
                 double fitness;
+                bool new_coop;
 
                 Agent(
                         bool p_coop,
@@ -28,8 +37,8 @@ class Agent {
                 ):
                         coop        (p_coop         ),
                         vecinos     (p_vecinos      ),
-                        fitness_func(nullptr        ),
-                        update      (nullptr        ),
+                        eval_fitness(nullptr        ),
+                        eval_coop   (nullptr        ),
                         id          (agent_next_id++)
                 {}
 
@@ -41,14 +50,6 @@ class Agent {
                                 }
                         }
                         return *this;
-                }
-
-                double eval_fitness() {
-                        // Esto tira std::bad_function_call si no le
-                        // definiste el fitness_func (y se quedó en el
-                        // nullptr que le asigna el constructor (arriba))
-                        fitness_func(this);
-                        return fitness;
                 }
 
                 friend std::ostream & operator << (std::ostream & out, const Agent & a) {
@@ -67,42 +68,72 @@ class Agent {
                                                 return
                                                         acc
                                                         + " "
-                                                        + std::to_string(v->id);
+                                                        + std::to_string(v->id)
+                                                ;
                                         }
                                 )
                                 << " ] ("
                                 << a.vecinos.size()
                                 << " vecinos)"
-                                ;
+                        ;
                 }
 };
 
 
 
 int main(int argc, char * argv[]) {
-        double coop_fraction;
-        double coop_cost;
-        double coop_benefit;
-        unsigned int iters;
-        unsigned int rows;
-        unsigned int cols;
-        double dif;
-        bool toggle;
+        // Procesamiento de argumentos de línea de comandos:
+
+        // Opciones de impresión:
+        bool         show_grid               ;
+        bool         show_avg_fitness_coop   ;
+        bool         show_avg_fitness_noncoop;
+        bool         show_coop_count         ;
+
+        // Opciones de simulación:
+        bool         toggle                  ;
+        double       coop_fraction           ;
+        double       coop_cost               ;
+        double       coop_benefit            ;
+        unsigned int iters                   ;
+        unsigned int rows                    ;
+        unsigned int cols                    ;
+        double       dif                     ;
 
         try {
-                po::options_description desc("basico");
-                desc.add_options()
-                        ("help"                              , "produce help message"            )
-                        ("toggle"                            , "operate in toggle mode"          )
-                        ("coop_fraction", po::value<double>(), "set initial cooperation fraction")
-                        ("coop_cost"    , po::value<double>(), "set cooperation cost"            )
-                        ("coop_benefit" , po::value<double>(), "set cooperation benefit"         )
-                        ("iters"        , po::value<int   >(), "set iteration count"             )
-                        ("rows"         , po::value<int   >(), "set grid row count"              )
-                        ("cols"         , po::value<int   >(), "set grid column count"           )
-                        ("dif"          , po::value<double>(), "set diffusion probability"       )
-                ;
+                // Declarar todas las opciones, sus tipos, su texto de ayuda, etc…
+                po::options_description desc("Options");
 
+                po::options_description general("General");
+                general.add_options()
+                        ("help,h", "show this help message")
+                ;
+                desc.add(general);
+
+                po::options_description output("Output control");
+                output.add_options()
+                        ("verbose,v"                                                                                         , "enable all output options"                             )
+                        ("show-grid"               , po::bool_switch        (&show_grid               )->default_value(false), "output grid states as text"                            )
+                        ("show-avg-fitness-coop"   , po::bool_switch        (&show_avg_fitness_coop   )->default_value(false), "output average cooperator fitness on each iteration"   )
+                        ("show-avg-fitness-noncoop", po::bool_switch        (&show_avg_fitness_noncoop)->default_value(false), "output average noncooperator fitness on each iteration")
+                        ("show-coop-count"         , po::bool_switch        (&show_coop_count         )->default_value(false), "output cooperator count on each iteration"             )
+                ;
+                desc.add(output);
+
+                po::options_description sim("Simulation control");
+                sim.add_options()
+                        ("toggle,t"                , po::bool_switch        (&toggle                  )->default_value(false), "operate in toggle mode"                                )
+                        ("coop-fraction,f"         , po::value<double      >(&coop_fraction           )->default_value(  0.5), "set initial cooperation fraction"                      )
+                        ("coop-cost,c"             , po::value<double      >(&coop_cost               )->default_value(  1  ), "set cooperation cost"                                  )
+                        ("coop-benefit,b"          , po::value<double      >(&coop_benefit            )->default_value( 10  ), "set cooperation benefit"                               )
+                        ("iters,i"                 , po::value<unsigned int>(&iters                   )->default_value( 50  ), "set iteration count"                                   )
+                        ("rows,y"                  , po::value<unsigned int>(&rows                    )->default_value(100  ), "set grid row count"                                    )
+                        ("cols,x"                  , po::value<unsigned int>(&cols                    )->default_value(100  ), "set grid column count"                                 )
+                        ("dif,d"                   , po::value<double      >(&dif                     )->default_value(  0  ), "set diffusion probability"                             )
+                ;
+                desc.add(sim);
+
+                // …y luego ejecutar el procesamiento de esas opciones:
                 po::variables_map vm;
                 po::store(po::parse_command_line(argc, argv, desc), vm);
                 po::notify(vm);
@@ -112,192 +143,262 @@ int main(int argc, char * argv[]) {
                         std::exit(EX_OK);
                 }
 
-                toggle = vm.count("toggle");
+                // La opción “verbose” activa todas las opciones de impresión.
+                if (vm.count("verbose")) {
+                        show_grid                = true;
+                        show_avg_fitness_coop    = true;
+                        show_avg_fitness_noncoop = true;
+                        show_coop_count          = true;
+                }
 
-                coop_cost     = vm.count("coop_cost"    ) ? vm["coop_cost"    ].as<double>() : 1   ;
-                coop_benefit  = vm.count("coop_benefit" ) ? vm["coop_benefit" ].as<double>() : 10  ;
-                coop_fraction = vm.count("coop_fraction") ? vm["coop_fraction"].as<double>() :  0.5;
-                iters         = vm.count("iters"        ) ? vm["iters"        ].as<int   >() : 50  ;
-                rows          = vm.count("rows"         ) ? vm["rows"         ].as<int   >() :100  ;
-                cols          = vm.count("cols"         ) ? vm["cols"         ].as<int   >() :100  ;
-                dif           = vm.count("dif"          ) ? vm["dif"          ].as<double>() :  0  ;
+                // Alertar al usuario de que la corrida que mandó a hacer no imprime nada (igual puede ser útil para medir tiempos, por ejemplo).
+                if (
+                        !show_grid                &&
+                        !show_avg_fitness_coop    &&
+                        !show_avg_fitness_noncoop &&
+                        !show_coop_count          &&
+                        true
+                ) {
+                        std::cerr << "warning: no output options active" << std::endl;
+                }
         } catch(std::exception & e) {
+                // Acá se viene a parar cuando se usan opciones inválidas:
                 std::cerr << "error: " << e.what() << std::endl;
                 std::exit(EX_USAGE);
         }
 
-        std::vector<std::vector<Agent *>> grid;
-        std::vector<Agent *> world;
 
-        // Crear el generador de randoms.
+
+        // Crear el generador de números aleatorios.
+
         std::random_device rd;
         std::mt19937 gen { rd() };
         std::uniform_real_distribution<> dis;
 
+
+
+        // Crear agentes y establecer sus conexiones iniciales.
+        std::vector<std::vector<Agent *>> grid;
+        std::vector<Agent *> world;
+
+        // Primero, hay que crear la red…
         for (unsigned int i = 0; i < rows; ++i) {
+                // Crear una fila vacía…
                 auto row = std::vector<Agent *>();
+
+                // …llenar la fila nueva…
                 for (unsigned int j = 0; j < cols; ++j) {
+                        // Crear un agente nuevo…
                         auto new_agent = new Agent(dis(gen) < coop_fraction);
+
+                        // …ponerlo al final de la fila que estamos construyendo…
                         row.push_back(new_agent);
+
+                        // …y agregarlo también a la lista general de agentes.
                         world.push_back(new_agent);
                 }
+
+                // …y agregar la fila a la matriz.
                 grid.push_back(std::move(row));
         }
 
+        // …y ahora hay que establecer las conexiones.
         for (unsigned int i = 0; i < rows; ++i) {
                 for (unsigned int j = 0; j < cols; ++j) {
-                        grid[i][j]->add_vecino(grid[i                    ][(cols + j - 1) % cols]);
-                        grid[i][j]->add_vecino(grid[i                    ][(cols + j + 1) % cols]);
-                        grid[i][j]->add_vecino(grid[(rows + i - 1) % rows][j                    ]);
-                        grid[i][j]->add_vecino(grid[(rows + i + 1) % rows][j                    ]);
+                        grid[i][j]->add_vecino(grid[i                    ][(cols + j - 1) % cols]); // Con el de la columna anterior
+                        grid[i][j]->add_vecino(grid[i                    ][(cols + j + 1) % cols]); // Con el de la columna siguiente
+                        grid[i][j]->add_vecino(grid[(rows + i - 1) % rows][j                    ]); // Con el de la fila anterior
+                        grid[i][j]->add_vecino(grid[(rows + i + 1) % rows][j                    ]); // Con el de la fila siguiente
                 }
         }
 
-        /* Para cada agente en el mundo, vamos a decirle cómo calcular
-         * su fitness y cómo actualizarse…
-         */
+
+
+        // Para cada agente en el mundo, vamos a decirle cómo calcular su fitness y cómo actualizarse…
         std::for_each(
                 world.begin(),
                 world.end(),
                 [toggle, dif, &dis, &gen, coop_cost, coop_benefit](Agent * a) {
-                        /* …así que a a->fitness_func le vamos a
-                         * asignar nuestra nueva función de fitness:
-                         */
-                        a->fitness_func = [dif, &dis, &gen, coop_cost, coop_benefit](Agent * af) {
-                                af->fitness = 0;
+                        // …así que a a->eval_fitness le vamos a asignar nuestra nueva función de fitness:
+                        a->eval_fitness = [a, dif, &dis, &gen, coop_cost, coop_benefit]() {
+                                // El cálculo es incremental, así que comenzamos en cero:
+                                a->fitness = 0;
 
+                                // Si hay difusión, hay que calcular el conjunto de vecinos indirectos:
                                 std::unordered_set<Agent *> gente2;
                                 if (dif) {
+                                        // Para cada vecino…
                                         std::for_each(
-                                                af->vecinos.begin(),
-                                                af->vecinos.end(),
-                                                [af, &gente2](Agent * v) {
+                                                a->vecinos.begin(),
+                                                a->vecinos.end(),
+                                                [a, &gente2](Agent * v) {
+                                                        // …buscamos todos los vecinos del vecino…
                                                         std::for_each(
                                                                 v->vecinos.begin(),
                                                                 v->vecinos.end(),
-                                                                [af, &gente2](Agent * v2) {
-                                                                        if (v2 != af && af->vecinos.find(v2) == af->vecinos.end()) gente2.insert(v2);
+                                                                [a, &gente2](Agent * v2) {
+                                                                        // …y si no es ni el mismo agente original, ni un vecino directo, entonces es indirecto:
+                                                                        if (v2 != a && a->vecinos.find(v2) == a->vecinos.end()) gente2.insert(v2);
                                                                 }
                                                         );
                                                 }
                                         );
                                 }
 
-                                auto incr_fitness = [coop_cost, coop_benefit, af](Agent * v) {
-                                        if (af->coop) af->fitness -= coop_cost   ;
-                                        if (v ->coop) af->fitness += coop_benefit;
+                                // Esta función toma a otro agente e incrementa el fitness del actual con el costo y el beneficio de esta corrida.
+                                auto incr_fitness = [a, coop_cost, coop_benefit](Agent * v) {
+                                        if (a->coop) a->fitness -= coop_cost   ;
+                                        if (v->coop) a->fitness += coop_benefit;
                                 };
 
+                                // Esa función hay que correrla con los vecinos directos…
                                 std::for_each(
-                                        af->vecinos.begin(),
-                                        af->vecinos.end(),
+                                        a->vecinos.begin(),
+                                        a->vecinos.end(),
                                         [&incr_fitness](Agent * v) {
+                                                // La interacción con los vecinos directos es incondicional.
                                                 incr_fitness(v);
                                         }
                                 );
 
+                                // …y si hay difusión, también con los indirectos.
                                 if (dif) {
                                         std::for_each(
                                                 gente2.begin(),
                                                 gente2.end(),
                                                 [dif, &incr_fitness, &dis, &gen](Agent * v) {
+                                                        // La interacción con los vecinos indirectos es probabilística.
                                                         if (dis(gen) < dif) incr_fitness(v);
                                                 }
                                         );
                                 }
 
-                                return af->fitness;
+                                // Y ya calculamos el fitness.
+                                return a->fitness;
                         };
 
-                        /* …y a a->update le vamos a asignar nuestra
-                         * nueva función de fritanga:
-                         */
-                        a->update = [a, toggle]() {
+                        // …y a a->eval_coop le vamos a asignar nuestra nueva función de actualización:
+                        a->eval_coop = [a, toggle]() {
                                 if (toggle) {
                                         for (
                                                 auto it = a->vecinos.begin();
                                                 it != a->vecinos.end();
                                                 ++it
                                         ) {
+                                                // Si el fitness de algún vecino es mayor que el nuestro…
                                                 if ((*it)->fitness > a->fitness) {
-                                                        a->coop ^= 1;
+                                                        // …debemos estar haciendo algo mal, así que cambiamos nuestro comportamiento:
+                                                        a->new_coop = !a->coop;
                                                         return;
                                                 }
                                         }
                                 } else {
-                                        auto max_fitness      = a->fitness;
-                                        auto max_fitness_coop = a->coop   ;
-                                        // ME ME ME ME MEEEEEEEEEEEEEEEEEEEE
+                                        // Por ahora, creemos que nuestro fitness es el máximo de nosotros y nuestros vecinos.
+                                        auto max_fitness = a->fitness;
 
+                                        // Recordamos nuestro propio comportamiento.
+                                        auto max_fitness_coop = a->coop;
+
+                                        // ¿Habrá un vecino con más fitness que nosotros?
                                         std::for_each(
                                                 a->vecinos.begin(),
                                                 a->vecinos.end(),
                                                 [&max_fitness, &max_fitness_coop](Agent * v) {
                                                         if (v->fitness > max_fitness) {
+                                                                // ¡Sí hay!  Recordamos su comportamiento.
                                                                 max_fitness      = v->fitness;
                                                                 max_fitness_coop = v->coop   ;
                                                         }
                                                 }
                                         );
 
-                                        a->coop = max_fitness_coop;
+                                        // Copiamos el comportamiento del vecino con más fitness; si no hay, copiamos el comportamiento que teníamos antes.
+                                        a->new_coop = max_fitness_coop;
                                 }
                         };
                 }
         );
 
-        auto show_state = [&world, &grid](unsigned int i, bool show_fitness) {
+
+
+        // Esta función se encarga de toda la impresión de datos en la simulación.
+        auto show_state = [
+                &show_grid               ,
+                &show_avg_fitness_coop   ,
+                &show_avg_fitness_noncoop,
+                &show_coop_count         ,
+                &world                   ,
+                &grid
+        ](unsigned int i, bool show_fitness) {
                 unsigned int n_coops = 0;
 
                 double pfc  = 0;
                 double pfnc = 0;
 
-                std::cout
-                        << "Iteración " << i << ":\n"
-                        << std::accumulate(
-                                grid.begin(),
-                                grid.end(),
-                                std::string(),
-                                [&n_coops, &pfc, &pfnc](std::string acc, std::vector<Agent *> row) {
-                                        return
-                                                acc
-                                                + std::accumulate(
-                                                        row.begin(),
-                                                        row.end(),
-                                                        std::string(),
-                                                        [&n_coops, &pfc, &pfnc](std::string acc, Agent * a) {
-                                                                (a->coop ? pfc : pfnc) += a->fitness;
-                                                                n_coops += a->coop;
-                                                                return acc + (a->coop ? u8"█" : u8"░");
-                                                        }
-                                                )
-                                                + "\n";
-                                }
-                        );
+                if (show_grid) std::cout << "begin grid " << i << "\n";
+                std::for_each(
+                        grid.begin(),
+                        grid.end(),
+                        [show_grid, &n_coops, &pfc, &pfnc](std::vector<Agent *> & row) {
+                                std::for_each(
+                                        row.begin(),
+                                        row.end(),
+                                        [show_grid, &n_coops, &pfc, &pfnc](Agent * a) {
+                                                (a->coop ? pfc : pfnc) += a->fitness;
+                                                n_coops += a->coop;
+                                                if (show_grid) std::cout << (a->coop ? COOP_AGENT_STRING : NOCOOP_AGENT_STRING);
+                                        }
+                                );
+                                if (show_grid) std::cout << "\n";
+                        }
+                );
+                if (show_grid) std::cout << "end grid " << i << std::endl;
 
-                std::cout << n_coops << " cooperadores" << "\n";
+                if (show_coop_count) {
+                        std::cout
+                                << "coop count "
+                                << i
+                                << ": "
+                                << n_coops
+                                << std::endl
+                        ;
+                }
 
-                if (show_fitness) std::cout
-                        << "Iteración " << i << "[fitness de cooperadores] = " << pfc /n_coops                  << "\n"
-                        << "Iteración " << i << "[fitness de traidores   ] = " << pfnc/(world.size() - n_coops) << "\n";
-
-                std::cout << std::endl;
+                if (show_fitness) {
+                        if (show_avg_fitness_coop   ) std::cout << "average cooperator fitness "    << i << ": " << pfc /n_coops                  << std::endl;
+                        if (show_avg_fitness_noncoop) std::cout << "average noncooperator fitness " << i << ": " << pfnc/(world.size() - n_coops) << std::endl;
+                }
         };
 
+
+
+        // Ciclo principal de la simulación:
+
+        // Mostrar el estado inicial antes de iterar.
         show_state(0, false);
+
         for (unsigned int i = 0; i < iters; ++i) {
+                // Se hacen tres pasadas por la lista de agentes: calcular fitness, calcular siguiente iteración, y asignar siguiente iteración.
+                // TODO: Si se usa una especie de double buffering esto sería quizás más eficiente… se ahorra una pasada (pero se hacen más indirecciones).
+
+                std::for_each(world.begin(), world.end(), [](Agent * a) { a->eval_fitness(); });
+                std::for_each(world.begin(), world.end(), [](Agent * a) { a->eval_coop()   ; });
+
+                bool all_coop   = true;
+                bool all_nocoop = true;
                 std::for_each(
                         world.begin(),
                         world.end(),
-                        [](Agent * a) { a->eval_fitness(); }
+                        [&all_coop, &all_nocoop](Agent * a) {
+                                a->coop = a->new_coop;
+                                if (a->new_coop) all_nocoop = false;
+                                else             all_coop   = false;
+                        }
                 );
 
-                std::for_each(
-                        world.begin(),
-                        world.end(),
-                        [](Agent * a) { a->update(); }
-                );
-
+                // Mostrar el nuevo estado.
                 show_state(i + 1, true);
+
+                if (all_coop || all_nocoop) break;
         }
 }
