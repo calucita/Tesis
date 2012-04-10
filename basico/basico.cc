@@ -85,10 +85,11 @@ int main(int argc, char * argv[]) {
         // Procesamiento de argumentos de línea de comandos:
 
         // Opciones de impresión:
+        bool         human_readable          ;
         bool         show_grid               ;
         bool         show_avg_fitness_coop   ;
         bool         show_avg_fitness_noncoop;
-        bool         show_coop_count         ;
+        bool         show_coop_fraction      ;
 
         // Opciones de simulación:
         bool         toggle                  ;
@@ -113,10 +114,11 @@ int main(int argc, char * argv[]) {
                 po::options_description output("Output control");
                 output.add_options()
                         ("verbose,v"                                                                                         , "enable all output options"                             )
+                        ("human-readable,r"        , po::bool_switch        (&human_readable          )->default_value(false), "use human-readable output format"                      )
                         ("show-grid"               , po::bool_switch        (&show_grid               )->default_value(false), "output grid states as text"                            )
                         ("show-avg-fitness-coop"   , po::bool_switch        (&show_avg_fitness_coop   )->default_value(false), "output average cooperator fitness on each iteration"   )
                         ("show-avg-fitness-noncoop", po::bool_switch        (&show_avg_fitness_noncoop)->default_value(false), "output average noncooperator fitness on each iteration")
-                        ("show-coop-count"         , po::bool_switch        (&show_coop_count         )->default_value(false), "output cooperator count on each iteration"             )
+                        ("show-coop-fraction"      , po::bool_switch        (&show_coop_fraction      )->default_value(false), "output cooperator fraction on each iteration"          )
                 ;
                 desc.add(output);
 
@@ -148,7 +150,7 @@ int main(int argc, char * argv[]) {
                         show_grid                = true;
                         show_avg_fitness_coop    = true;
                         show_avg_fitness_noncoop = true;
-                        show_coop_count          = true;
+                        show_coop_fraction       = true;
                 }
 
                 // Alertar al usuario de que la corrida que mandó a hacer no imprime nada (igual puede ser útil para medir tiempos, por ejemplo).
@@ -156,7 +158,7 @@ int main(int argc, char * argv[]) {
                         !show_grid                &&
                         !show_avg_fitness_coop    &&
                         !show_avg_fitness_noncoop &&
-                        !show_coop_count          &&
+                        !show_coop_fraction       &&
                         true
                 ) {
                         std::cerr << "warning: no output options active" << std::endl;
@@ -323,50 +325,83 @@ int main(int argc, char * argv[]) {
 
         // Esta función se encarga de toda la impresión de datos en la simulación.
         auto show_state = [
+                &human_readable          ,
                 &show_grid               ,
                 &show_avg_fitness_coop   ,
                 &show_avg_fitness_noncoop,
-                &show_coop_count         ,
+                &show_coop_fraction      ,
                 &world                   ,
-                &grid
+                &grid                    ,
+                &rows                    ,
+                &cols
         ](unsigned int i, bool show_fitness) {
                 unsigned int n_coops = 0;
 
                 double pfc  = 0;
                 double pfnc = 0;
 
-                if (show_grid) std::cout << "begin grid " << i << "\n";
+                static unsigned int next_field_id = 0;
+
+                if (human_readable && show_grid) std::cout << "begin grid " << i << "\n";
                 std::for_each(
                         grid.begin(),
                         grid.end(),
-                        [show_grid, &n_coops, &pfc, &pfnc](std::vector<Agent *> & row) {
+                        [&human_readable, &show_grid, &n_coops, &pfc, &pfnc](std::vector<Agent *> & row) {
                                 std::for_each(
                                         row.begin(),
                                         row.end(),
-                                        [show_grid, &n_coops, &pfc, &pfnc](Agent * a) {
+                                        [&human_readable, &show_grid, &n_coops, &pfc, &pfnc](Agent * a) {
                                                 (a->coop ? pfc : pfnc) += a->fitness;
                                                 n_coops += a->coop;
-                                                if (show_grid) std::cout << (a->coop ? COOP_AGENT_STRING : NOCOOP_AGENT_STRING);
+                                                if (human_readable && show_grid) {
+                                                        std::cout << (a->coop ? COOP_AGENT_STRING : NOCOOP_AGENT_STRING);
+                                                }
                                         }
                                 );
-                                if (show_grid) std::cout << "\n";
+                                if (human_readable && show_grid) std::cout << "\n";
                         }
                 );
-                if (show_grid) std::cout << "end grid " << i << std::endl;
+                if (human_readable && show_grid) std::cout << "end grid " << i << std::endl;
 
-                if (show_coop_count) {
+                if (show_coop_fraction) {
+                        static unsigned int k = next_field_id++;
                         std::cout
-                                << "coop count "
-                                << i
-                                << ": "
-                                << n_coops
+                                << (
+                                        human_readable
+                                        ? ("coop fraction " + std::to_string(i) + ": ")
+                                        : (std::to_string(k) + ":")
+                                )
+                                << static_cast<double>(n_coops)/(rows*cols)
                                 << std::endl
                         ;
                 }
 
                 if (show_fitness) {
-                        if (show_avg_fitness_coop   ) std::cout << "average cooperator fitness "    << i << ": " << pfc /n_coops                  << std::endl;
-                        if (show_avg_fitness_noncoop) std::cout << "average noncooperator fitness " << i << ": " << pfnc/(world.size() - n_coops) << std::endl;
+                        if (show_avg_fitness_coop) {
+                                static unsigned int k = next_field_id++;
+                                if (n_coops != 0) std::cout
+                                        << (
+                                                human_readable
+                                                ? ("average cooperator fitness " + std::to_string(i) + ": ")
+                                                : (std::to_string(k) + ":")
+                                        )
+                                        << pfc/n_coops
+                                        << std::endl
+                                ;
+                        }
+
+                        if (show_avg_fitness_noncoop) {
+                                static unsigned int k = next_field_id++;
+                                if (n_coops != world.size()) std::cout
+                                        << (
+                                                human_readable
+                                                ? ("average noncooperator fitness " + std::to_string(i) + ": ")
+                                                : (std::to_string(k) + ":")
+                                        )
+                                        << pfnc/(world.size() - n_coops)
+                                        << std::endl
+                                ;
+                        }
                 }
         };
 
