@@ -23,6 +23,7 @@ class Agent {
         public:
                 bool coop;
                 std::unordered_set<Agent *> vecinos;
+                std::unordered_set<Agent *> vecinos2;
 
                 std::function<void(void)> eval_fitness;
                 std::function<void(void)> eval_coop   ;
@@ -50,6 +51,25 @@ class Agent {
                                 }
                         }
                         return *this;
+                }
+
+                void eval_vecinos2() {
+                        // Para cada vecino…
+                        std::for_each(
+                                vecinos.begin(),
+                                vecinos.end(),
+                                [this](Agent * v) {
+                                        // …buscamos todos los vecinos del vecino…
+                                        std::for_each(
+                                                v->vecinos.begin(),
+                                                v->vecinos.end(),
+                                                [this](Agent * v2) {
+                                                        // …y si no es ni el mismo agente original, ni un vecino directo, entonces es indirecto:
+                                                        if (v2 != this && vecinos.find(v2) == vecinos.end()) vecinos2.insert(v2);
+                                                }
+                                        );
+                                }
+                        );
                 }
 
                 friend std::ostream & operator << (std::ostream & out, const Agent & a) {
@@ -226,27 +246,6 @@ int main(int argc, char * argv[]) {
                                 // El cálculo es incremental, así que comenzamos en cero:
                                 a->fitness = 0;
 
-                                // Si hay difusión, hay que calcular el conjunto de vecinos indirectos:
-                                std::unordered_set<Agent *> gente2;
-                                if (dif) {
-                                        // Para cada vecino…
-                                        std::for_each(
-                                                a->vecinos.begin(),
-                                                a->vecinos.end(),
-                                                [a, &gente2](Agent * v) {
-                                                        // …buscamos todos los vecinos del vecino…
-                                                        std::for_each(
-                                                                v->vecinos.begin(),
-                                                                v->vecinos.end(),
-                                                                [a, &gente2](Agent * v2) {
-                                                                        // …y si no es ni el mismo agente original, ni un vecino directo, entonces es indirecto:
-                                                                        if (v2 != a && a->vecinos.find(v2) == a->vecinos.end()) gente2.insert(v2);
-                                                                }
-                                                        );
-                                                }
-                                        );
-                                }
-
                                 // Esta función toma a otro agente e incrementa el fitness del actual con el costo y el beneficio de esta corrida.
                                 auto incr_fitness = [a, coop_cost, coop_benefit](Agent * v) {
                                         if (a->coop) a->fitness -= coop_cost   ;
@@ -266,8 +265,8 @@ int main(int argc, char * argv[]) {
                                 // …y si hay difusión, también con los indirectos.
                                 if (dif) {
                                         std::for_each(
-                                                gente2.begin(),
-                                                gente2.end(),
+                                                a->vecinos2.begin(),
+                                                a->vecinos2.end(),
                                                 [dif, &incr_fitness, &dis, &gen](Agent * v) {
                                                         // La interacción con los vecinos indirectos es probabilística.
                                                         if (dis(gen) < dif) incr_fitness(v);
@@ -318,6 +317,9 @@ int main(int argc, char * argv[]) {
                                         a->new_coop = max_fitness_coop;
                                 }
                         };
+
+                        // Si hay difusión, hay que calcular el conjunto de vecinos indirectos:
+                        a->eval_vecinos2();
                 }
         );
 
@@ -434,6 +436,6 @@ int main(int argc, char * argv[]) {
                 // Mostrar el nuevo estado.
                 show_state(i + 1, true);
 
-                if (all_coop || all_nocoop) break;
+                //if (all_coop || all_nocoop) break;
         }
 }
